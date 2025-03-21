@@ -1,0 +1,813 @@
+---
+title: "cs 670 report"
+---
+
+# **Introduction**
+
+March Madness, the NCAA Men's Basketball Tournament, is one of the most unpredictable and highly anticipated sporting events in the United States. Every year, millions of fans attempt to fill out the perfect bracket, yet the tournament’s single-elimination format and frequent upsets make accurate predictions incredibly challenging. As data analytics and machine learning continue to evolve, researchers and enthusiasts alike are exploring ways to use data-driven approaches to gain a competitive edge in predicting game outcomes.
+
+This report explores the methodologies, datasets, and statistical models used in the analysis and prediction of March Madness 2025 game outcomes. It highlights key performance indicators (KPIs), such as team efficiency metrics, player statistics, seed histories. The goal is to assess the predictive power of various data sources and models, and to identify patterns or strategies that may enhance the accuracy of future predictions. By using historical data and current season metrics, this research could contribute to the growing field of sports analytics and offer insights into the ever-evolving art and science of bracket forecasting.
+
+# Data Setup
+
+First lets import the required packages.
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+import numpy as np
+import pandas as pd
+from sklearn.metrics import brier_score_loss, mean_squared_error, accuracy_score
+from matplotlib import pyplot as plt
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import cross_validate, TimeSeriesSplit
+from sklearn.preprocessing import OneHotEncoder
+from sklearn.model_selection import RandomizedSearchCV
+
+sns.set_theme(font_scale=1.3, palette='Set2')
+```
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+#!pip install kaggle
+#!kaggle competitions download -c march-machine-learning-mania-2025
+import zipfile
+
+zip_file_path = 'march-machine-learning-mania-2025.zip'
+extract_dir = './data'
+
+with zipfile.ZipFile(zip_file_path, 'r') as zip_ref:
+    zip_ref.extractall(extract_dir)
+```
+
+# Goal
+
+The primary objective of this research is to **predict the win probability** for every possible matchup in the season using data-driven methods.
+
+## Key Aspects
+
+-   **Prediction Metric:**
+    -   The **Brier score** will be used to evaluate the accuracy of predictions.\
+    -   Formula: **Brier score = (Actual result - Forecast Probability)²**
+
+## Data-Driven Questions
+
+-   **Differences in Men's vs. Women's Data:**
+    -   Are there any notable statistical differences between the two datasets?
+-   **Coach Impact:**
+    -   Does the coach's experience and strategy significantly influence game outcomes?
+-   **Key Predictive Features:**
+    -   What variables (e.g., team ranking, past performance, location) contribute most to accurate predictions?
+
+This research aims to refine sports analytics models, identify key factors influencing game outcomes, and improve the accuracy of March Madness predictions.
+
+## Brier Score
+
+### Definition
+
+The **Brier Score (BS)** is a metric used to measure the accuracy of probabilistic predictions. It quantifies the mean squared error between the predicted probability of an event occurring and the actual outcome.
+
+### Formula:
+
+$$
+BS = \frac{1}{N} \sum_{t=1}^{N} (f_t - o_t)^2
+$$ Where:\
+- ( N ) = Number of predictions\
+- ( f_t ) = Forecasted probability of the event occurring\
+- ( o_t ) = Actual outcome (1 if the event occurs, 0 if it does not)
+
+### Interpreting the Score
+
+-   The Brier Score ranges from **0 to 1**, where **lower values indicate better predictive performance**.
+-   A **perfect prediction** results in a **Brier Score of 0**.
+-   A **completely incorrect prediction** results in a **Brier Score of 1**.
+-   A **random guess (e.g., 50% probability for both outcomes)** tends to yield a **higher Brier Score**, reflecting greater uncertainty.
+
+### Example Calculations
+
+The table below illustrates how Brier Scores are computed for different matchups and prediction probabilities:
+
+| **Game** | **Result**  | **Predicted Team 1 Win Probability** | **Brier Score** |
+|---------------|---------------|----------------------------|---------------|
+| 1        | Team 1 wins | 0.5                                  | **0.25**        |
+| 2        | Team 2 wins | 0.5                                  | **0.25**        |
+| 1        | Team 1 wins | 0.6                                  | **0.16**        |
+| 2        | Team 2 wins | 0.4                                  | **0.16**        |
+| 1        | Team 1 wins | 1.0                                  | **0.00**        |
+| 2        | Team 2 wins | 0.0                                  | **0.00**        |
+
+### Key Observations
+
+-   **A 50% probability (0.5) always results in a 0.25 Brier Score** if the actual outcome is 1 or 0.
+-   **Predictions closer to 1 or 0 improve accuracy** (e.g., a prediction of 1 for a winning team leads to a score of 0).
+-   **Lower scores indicate better forecasting accuracy** and reflect well-calibrated models.
+
+### Use in March Madness Predictions
+
+The Brier Score is particularly useful for evaluating models predicting **game outcomes** in March Madness:
+
+\- It helps assess how **reliable and calibrated** a model is in assigning probabilities.
+
+\- Comparing Brier Scores across different models allows researchers to determine the **best approach for tournament predictions**.
+
+By minimizing the **Brier Score**, analysts can improve the precision of their March Madness forecasts and refine predictive strategies based on historical and real-time data.
+
+# Data Exploration
+
+To develop an effective predictive model for March Madness 2025, various historical and real-time data sources are used. These datasets provide crucial insights into team performance, tournament trends, and external factors influencing game outcomes.
+
+## Key Data Categories
+
+-   **Team Seeds**
+    -   Official NCAA tournament seedings assigned to teams each year.
+    -   Higher seeds generally indicate stronger teams but are not always predictive of outcomes.
+-   **Public Rankings**
+    -   Team rankings from various sources such as the AP Poll, Coaches Poll, and advanced analytics models.
+    -   Helps assess how teams are perceived before and during the tournament.
+-   **Game Locations (City, State)**
+    -   Information on where each game is played, including the city and state.
+    -   Certain teams may have a home-court advantage or perform better/worse in specific locations.
+-   **Coach Data**
+    -   Historical performance of coaches in the regular season and tournament play.
+    -   Coaching strategies, experience, and records in close games and upsets.
+-   **Regular Season Game Outcomes and Scores**
+    -   Win/loss records, final scores, and point differentials from the season.
+    -   Evaluating how teams perform against different types of opponents.
+-   **Team Conferences**
+    -   The conference each team belongs to (e.g., Big Ten, SEC, ACC).
+    -   Certain conferences historically perform better in the tournament than others.
+-   **History of NCAA Tournament Games and Scores**
+    -   **Men’s tournament history since 1985**
+        -   Data on all past games, including upsets, seed performance, and championship outcomes.
+    -   **Women’s tournament history since 1998**
+        -   Similar data on historical trends in the women's tournament.
+
+```{python}
+# Import team data
+w_team = pd.read_csv('data/WTeams.csv')
+m_team = pd.read_csv('data/MTeams.csv')
+w_team.head()
+```
+
+```{python}
+# Regular season results
+m_tourney_results = pd.read_csv('data/MNCAATourneyCompactResults.csv')
+w_tourney_results = pd.read_csv('data/WNCAATourneyCompactResults.csv')
+m_tourney_results.head()
+```
+
+Lets explore score differences between men's and women's data.
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+# Group by season and calculate the average scores for men's tournament
+avg_scores_men = m_tourney_results.groupby('Season')[['WScore', 'LScore']].mean()
+
+# Group by season and calculate the average scores for women's tournament
+avg_scores_women = w_tourney_results.groupby('Season')[['WScore', 'LScore']].mean()
+
+# Calculate the delta between winning and losing scores for both men's and women's tournaments
+avg_scores_men['Delta'] = avg_scores_men['WScore'] - avg_scores_men['LScore']
+avg_scores_women['Delta'] = avg_scores_women['WScore'] - avg_scores_women['LScore']
+
+# Plot the delta scores for both men's and women's tournaments
+plt.figure(figsize=(12, 6))
+plt.plot(avg_scores_men.index, avg_scores_men['Delta'], marker='o', linestyle='-', color='b', label='Men Score Delta')
+plt.plot(avg_scores_women.index, avg_scores_women['Delta'], marker='o', linestyle='-', color='r', label='Women Score Delta')
+plt.title('Delta Between Winning and Losing Scores Throughout the Years (Men vs Women)')
+plt.xlabel('Season')
+plt.ylabel('Score Delta')
+plt.legend()
+plt.grid(True)
+plt.show();
+```
+
+On this graph we can see that if women win they tend to win by a larger margin than men. This could be explained by a higher difference in class between women's stronger and weaker teams.\
+
+## Team-specific feature engineering
+
+First, lets focus on exploring the team-specific features.
+
+These features capture key team performance metrics and coaching factors that may influence game outcomes.
+
+### Key Features
+
+-   **Average Points Delta**
+    -   Difference between points scored by the team and points allowed by opponents during the regular season.
+    -   Helps assess team dominance in scoring.
+-   **Win Rate During Regular Season**
+    -   Percentage of games won by the team before the tournament.
+    -   A strong predictor of overall team strength.
+-   **Coach Fired During the Season (Flag)**
+    -   Indicates whether the head coach was fired mid-season.
+    -   Sudden coaching changes can disrupt team performance.
+-   **Coach Consecutive Years with Team**
+    -   Number of consecutive seasons the coach has been leading the team.
+    -   Long-tenured coaches may have more stable and successful programs.
+-   **Men’s or Women’s NCAA Division**
+    -   Differentiates between the men's and women’s tournaments.
+    -   Important for understanding historical trends and performance differences.
+
+These features enhance predictive models by incorporating both **team performance statistics** and **coaching stability factors**, which may impact March Madness outcomes.
+
+Import team data:
+
+```{python}
+m_teams = pd.read_csv('data/MTeams.csv')
+w_teams = pd.read_csv('data/WTeams.csv')
+m_teams['gender'] = 'M'
+w_teams['gender'] = 'W'
+```
+
+Now lets create a separate record for each season of each team
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+# Create a separate record for each year for women teams since 1998
+w_teams_expanded = w_teams.loc[w_teams.index.repeat(2025 - 1998 + 1)]
+w_teams_expanded['Season'] = w_teams.apply(lambda row: list(range(1998, 2025 + 1)), axis=1).explode().values
+
+# Create a separate record for each year for men teams for every season the team is in D1
+m_teams_expanded = m_teams.loc[m_teams.index.repeat(m_teams['LastD1Season'] - m_teams['FirstD1Season'] + 1)]
+m_teams_expanded['Season'] = m_teams.apply(lambda row: list(range(row['FirstD1Season'], row['LastD1Season'] + 1)), axis=1).explode().values
+
+# Combine the expanded dataframes
+teams_expanded = pd.concat([m_teams_expanded, w_teams_expanded], axis=0)
+teams_expanded.head()
+```
+
+Adding the seed data to teams:
+
+```{python}
+m_seed = pd.read_csv('data/MNCAATourneySeeds.csv')
+w_seed = pd.read_csv('data/WNCAATourneySeeds.csv')
+
+seed_df = pd.concat([m_seed, w_seed], axis=0)
+seed_df['Region'] = seed_df['Seed'].apply(lambda x: x[0])
+seed_df['Seed_num'] = seed_df['Seed'].apply(lambda x: int(x[1:3]))
+
+# Merge seed with teams dataframe
+teams_expanded = pd.merge(seed_df, teams_expanded, on=('TeamID', 'Season'), how='inner')
+teams_expanded.head()
+```
+
+### Add features corresponding to the regular season performance
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+m_regular_season_results = pd.read_csv('data/MRegularSeasonCompactResults.csv')
+w_regular_season_results = pd.read_csv('data/WRegularSeasonCompactResults.csv')
+
+regular_season_results = pd.concat([m_regular_season_results, w_regular_season_results], axis=0)
+
+# Calculate average points difference for each team for each season
+regular_season_results['PointsDiff'] = regular_season_results['WScore'] - regular_season_results['LScore']
+
+points_diff_win = regular_season_results[['Season', 'WTeamID', 'PointsDiff']]
+points_diff_win.columns = ['Season', 'TeamID', 'PointsDiff']
+
+points_diff_lose = regular_season_results[['Season', 'LTeamID', 'PointsDiff']]
+points_diff_lose['PointsDiff'] = -points_diff_lose['PointsDiff']
+points_diff_lose.columns = ['Season', 'TeamID', 'PointsDiff']
+
+point_diff_total = pd.concat([points_diff_win, points_diff_lose], axis=0)
+
+point_diff_total['WinFlag'] = (point_diff_total['PointsDiff'] > 0).astype(int)
+
+avg_stats = point_diff_total.groupby(by=['TeamID', 'Season'])[['PointsDiff', 'WinFlag']].mean().reset_index()
+avg_stats.columns = ['TeamID', 'Season', 'AvgPointsDiff', 'WinRate']
+
+# Merge with teams dataframe
+teams_expanded_2 = pd.merge(teams_expanded, avg_stats, on=('TeamID', 'Season'), how='left')
+
+
+teams_expanded_2.head()
+```
+
+Let's explore the relationship between average points difference and win rate of the team.
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+plt.figure(figsize=(10, 6))
+sns.scatterplot(data=teams_expanded_2, x='AvgPointsDiff', y='WinRate', s=30, alpha = 0.3, label='Teams')
+sns.regplot(data=teams_expanded_2, x='AvgPointsDiff', y='WinRate', scatter=False, color='blue', label='Regression Line')
+plt.scatter(0, 0.5, color='red', s=100, zorder=5, label='Reference Point (0, 0.5)')
+plt.title('Win Rate vs Average Points Difference')
+plt.xlabel('Average Points Difference')
+plt.ylabel('Win Rate')
+plt.ylim(0.3, 1.02)
+plt.legend()
+plt.grid(True)
+plt.show()
+```
+
+The graph demonstrates a linear relationship between these properties.
+
+It also represents an interesting property about the data. You could expect that the line would pass through the reference point because the team with an average 0 pts difference would should have a 0.5 win rate, but graph shows that these types of teams have a greater win rate.
+
+This could be explained by the fact that the data samples presented contain only the teams that actually qualified for the playoffs. And this could imply that they are better then average in terms of win-rate to points difference relationship.
+
+### Add public rankings data for men's basketball
+
+```{python}
+m_public_rankings = pd.read_csv('data/MMasseyOrdinals.csv')
+latest_rankings = m_public_rankings.sort_values('RankingDayNum', ascending=True).drop_duplicates(['Season', 'TeamID'], keep='last')
+latest_rankings = latest_rankings[['Season', 'TeamID', 'OrdinalRank', 'SystemName']]
+latest_rankings.columns = ['Season', 'TeamID', 'PublicRank', 'RankingSystem']
+teams_expanded_3 = pd.merge(teams_expanded_2, latest_rankings, on=('Season', 'TeamID'), how='left')
+teams_expanded_3.head()
+```
+
+### Add conference data
+
+Likely these features won't be useful for the prediction, but we can add them to the data for future analysis.
+
+```{python}
+conference = pd.read_csv('data/Conferences.csv')
+m_team_conference = pd.read_csv('data/MTeamConferences.csv')
+w_team_conference = pd.read_csv('data/WTeamConferences.csv')
+m_team_conference = m_team_conference.merge(conference, on='ConfAbbrev', how='left')
+w_team_conference = w_team_conference.merge(conference, on='ConfAbbrev', how='left')
+
+team_conference = pd.concat([m_team_conference, w_team_conference], axis=0)
+teams_expanded_4 = pd.merge(teams_expanded_3, team_conference, on=('TeamID', 'Season'), how='left')
+teams_expanded_4.head()
+```
+
+### Add the coach feature for men
+
+```{python}
+coach_df = pd.read_csv('data/MTeamCoaches.csv')
+# Add a column to indicate if the coach was fired during the season
+coach_df['Fired_During_Season'] = (coach_df['LastDayNum'] != 154).astype(int)
+
+# Calculate the number of consecutive years of the coach at the team
+coach_df['ConsecutiveYears'] = coach_df.groupby(['TeamID', 'CoachName'])['Season'].rank(method='first').astype(int)
+
+coach_df = coach_df.groupby(['TeamID', 'Season']).agg(
+    Fired_During_Season=('Fired_During_Season', 'max'),
+    ConsecutiveYears=('ConsecutiveYears', 'first')
+).reset_index()
+teams_expanded_5 = pd.merge(teams_expanded_4, coach_df, on=('TeamID', 'Season'), how='left')
+teams_expanded_5['ExperienceLevel'] = teams_expanded_5['ConsecutiveYears'].apply(
+    lambda x: 'NEW' if x <= 2 else 'ENOUGH' if x <= 4 else 'EXPERIENCED'
+)
+teams_expanded_5.head()
+```
+
+Exploring the relationship between coach Experience Level and WinRate
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+# Filter out rows with NaN values in 'ExperienceLevel' and 'WinRate'
+filtered_data = teams_expanded_5.dropna(subset=['ExperienceLevel', 'WinRate'])
+
+# Plot the win rate depending on coach experience
+plt.figure(figsize=(12, 6))
+sns.boxplot(data=filtered_data, x='ExperienceLevel', y='WinRate', hue='ExperienceLevel')
+plt.title('Win Rate Depending on Coach Experience')
+plt.xlabel('Coach Experience Level')
+plt.ylabel('Win Rate')
+plt.grid(True)
+plt.show()
+```
+
+We can see that the more experienced coached tend to have a higher win rate.
+
+## Pairwise features
+
+These features compare two teams in a given matchup, capturing differences in performance metrics to improve prediction accuracy.
+
+### Key Features
+
+-   **Difference Between Seeds**
+    -   Measures the gap in tournament seeding between two teams.
+    -   Larger differences often indicate stronger favorites.
+-   **Difference Between Public Rankings**
+    -   Compares rankings from sources such as AP Polls and Coaches Polls.
+    -   Helps assess how the teams are perceived in strength before the matchup.
+-   **Difference Between Point Differentials in Regular Season**
+    -   Compares how much each team outscored or was outscored by opponents on average.
+    -   A higher differential suggests a stronger team.
+
+By incorporating these pairwise comparisons, the model can evaluate relative strengths and weaknesses between two competing teams, refining the accuracy of game outcome predictions.
+
+Extracting previous years tourney results:
+
+```{python}
+m_tourney_results = pd.read_csv('data/MNCAATourneyCompactResults.csv')
+w_tourney_results = pd.read_csv('data/WNCAATourneyCompactResults.csv')
+
+tourney_results = pd.concat([m_tourney_results, w_tourney_results], axis=0)
+tourney_results.head()
+```
+
+Extracting city data:
+
+```{python}
+cities = pd.read_csv('data/Cities.csv')
+m_game_cities = pd.read_csv('data/MGameCities.csv')
+w_game_cities = pd.read_csv('data/WGameCities.csv')
+
+game_cities = pd.concat([m_game_cities, w_game_cities], axis=0)
+game_cities = game_cities.merge(cities, on='CityID', how='left')    
+tourney_results = tourney_results.merge(game_cities, on=['Season', 'DayNum', 'WTeamID', 'LTeamID'], how='left')
+tourney_results.head()
+```
+
+```{python}
+tourney_results.rename(columns={
+    'WTeamID': 'TeamID_1',
+    'WScore': 'Score_1',
+    'LTeamID': 'TeamID_2',
+    'LScore': 'Score_2'
+}, inplace=True)
+```
+
+Now it's important switch 50% of the records so that the winning team doesn't always go first.
+
+```{python}
+import random
+
+# Randomly shuffle 50% of the rows
+random.seed(42)
+mask = random.sample(range(len(tourney_results)), len(tourney_results) // 2)
+tourney_results.iloc[mask] = tourney_results.iloc[mask].apply(
+    lambda row: pd.Series({
+        'Season': row['Season'],
+        'DayNum': row['DayNum'],
+        'TeamID_1': row['TeamID_2'],
+        'Score_1': row['Score_2'],
+        'TeamID_2': row['TeamID_1'],
+        'Score_2': row['Score_1'],
+        'WLoc': row['WLoc'],
+        'NumOT': row['NumOT'],
+        'CRType': row['CRType'],
+        'CityID': row['CityID'],
+        'City': row['City'],
+        'State': row['State']
+    }), axis=1
+)
+```
+
+Creating a target, marking if the 1st team has won
+
+```{python}
+tourney_results['target'] = (tourney_results['Score_1'] > tourney_results['Score_2']).astype(int)
+tourney_results.sample(10)
+```
+
+Append the team features for each pair:
+
+```{python}
+teams_expanded_5_1 = teams_expanded_5.add_suffix('_1')
+teams_expanded_5_1.rename(columns={'Season_1': 'Season', 'TeamID_1': 'TeamID'}, inplace=True)
+
+teams_expanded_5_2 = teams_expanded_5.add_suffix('_2')
+teams_expanded_5_2.rename(columns={'Season_2': 'Season', 'TeamID_2': 'TeamID'}, inplace=True)
+
+df = pd.merge(
+    tourney_results,
+    teams_expanded_5_1,
+    left_on=['Season', 'TeamID_1'],
+    right_on=['Season', 'TeamID'],
+    how='left',
+    suffixes=('', '_1')
+)
+
+df = pd.merge(
+    df,
+    teams_expanded_5_2,
+    left_on=['Season', 'TeamID_2'],
+    right_on=['Season', 'TeamID'],
+    how='left',
+    suffixes=('', '_2')
+)
+df.head()
+```
+
+Leave out only the useful columns:
+
+```{python}
+df.drop(columns=[
+    'TeamID',
+    'DayNum',
+    'NumOT',
+    'CRType',
+    'CityID',
+    'gender_2',
+    'ConfAbbrev_1',
+    'WLoc'
+], inplace=True)
+
+df.rename(columns={
+    'gender_1': 'gender'
+}, inplace=True)
+```
+
+Assign the pairwise difference features
+
+```{python}
+df['seed_diff'] = df['Seed_num_1'] - df['Seed_num_2']
+df['rank_diff'] = df['PublicRank_1'] - df['PublicRank_2']
+df['win_rate_diff'] = df['WinRate_1'] - df['WinRate_2']
+df['points_diff_diff'] = df['AvgPointsDiff_1'] - df['AvgPointsDiff_2']
+df['consequtive_years_diff'] = df['ConsecutiveYears_1'] - df['ConsecutiveYears_2']
+```
+
+Analyzing seed difference impact on target:
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+
+# Group by seed_diff and calculate the average target
+grouped_df = df.groupby(by=['seed_diff', 'gender'])['target'].mean().reset_index()
+
+# Create a boxplot for seed_diff vs average target
+
+plt.figure(figsize=(12, 6))
+plt.plot(-grouped_df.query("gender == 'M'")['seed_diff'], grouped_df.query("gender == 'M'")['target'], marker='o', linestyle='-', color='b', label='Men Avg Seed Diff')
+
+plt.plot(-grouped_df.query("gender == 'W'")['seed_diff'], grouped_df.query("gender == 'W'")['target'], marker='o', linestyle='-', color='r', label='Women Avg Seed Diff')
+plt.title('Seed Difference vs Average Target')
+plt.legend()
+plt.xlabel('Seed Difference')
+plt.ylabel('Average Target')
+plt.grid(True)
+plt.show()
+
+```
+
+Stong dependency of the target base on the seed difference for both men and women can be noticed on the graph. And that makes sens: the higher the seed difference between the 1st team and the 2nd team - the more likely it is that the 1st team outclasses the 2nd one and wins the game.
+
+# Model application
+
+Specifying features and target
+
+```{python}
+features = [
+    'seed_diff',
+    'rank_diff',
+    'win_rate_diff',
+    'points_diff_diff',
+    'consequtive_years_diff',
+    'Seed_num_1',
+    'Seed_num_2',
+    'PublicRank_1',
+    'PublicRank_2',
+    'WinRate_1',
+    'WinRate_2',
+    'AvgPointsDiff_1',
+    'AvgPointsDiff_2',
+    'ConsecutiveYears_1',
+    'ConsecutiveYears_2',
+    'gender',
+    'Fired_During_Season_1',
+    'Fired_During_Season_2',
+    'ExperienceLevel_1',
+    'ExperienceLevel_2'
+]
+
+target = 'target'
+```
+
+Preparing the data
+
+```{python, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE, results='hide'}
+#| code-fold: true
+X = df[features]
+y = df[target]
+X.loc[:, 'consequtive_years_diff'] = X['consequtive_years_diff'].fillna(0)
+X.loc[:, 'rank_diff'] = X['rank_diff'].fillna(0)
+X.loc[:, 'PublicRank_1'] = X['PublicRank_1'].fillna(15)
+X.loc[:, 'PublicRank_2'] = X['PublicRank_2'].fillna(15)
+X.loc[:, 'Fired_During_Season_1'] = X['Fired_During_Season_1'].fillna(0)
+X.loc[:, 'Fired_During_Season_2'] = X['Fired_During_Season_2'].fillna(0)
+X.loc[:, 'ExperienceLevel_1'] = X['ExperienceLevel_1'].fillna('EXPERIENCED')
+X.loc[:, 'ExperienceLevel_2'] = X['ExperienceLevel_2'].fillna('EXPERIENCED')
+X.loc[:, 'ConsecutiveYears_1'] = X['ConsecutiveYears_1'].fillna(0)
+X.loc[:, 'ConsecutiveYears_2'] = X['ConsecutiveYears_2'].fillna(0)
+
+# manual label encoding for Experience level
+X.loc[:, 'ExperienceLevel_1'] = X['ExperienceLevel_1'].map({'NEW': 0, 'ENOUGH': 1, 'EXPERIENCED': 2}).astype(int)
+X.loc[:, 'ExperienceLevel_2'] = X['ExperienceLevel_2'].map({'NEW': 0, 'ENOUGH': 1, 'EXPERIENCED': 2}).astype(int)
+
+# one hot encoding for gender
+X.loc[:, 'gender'] = OneHotEncoder(drop='first').fit_transform(X[['gender']]).toarray()
+```
+
+## **Selected Model: Random Forest**
+
+### Why Random Forest?
+
+-   **Hyperparameter Flexibility:**
+    -   Easy to tune to prevent overfitting, especially given a small dataset (\~4500 samples).
+-   **Captures Complex Dependencies:**
+    -   Can handle non-linear relationships and interactions between features.
+-   **Feature Importance Estimation:**
+    -   Helps identify the most influential variables in predicting game outcomes.
+
+## Optimized Hyperparameters (After Grid Search & Cross-Validation)
+
+### The best parameters were selected using grid search with time series cross-validation, optimizing model performance while preventing overfitting:
+
+\- **n_estimators = 1000** (Number of trees in the forest)
+
+\- **min_samples_split = 5** (Minimum samples required to split an internal node) - **min_samples_leaf = 15** (Minimum samples required to be a leaf node)
+
+\- **max_features = 0.3** (Fraction of total features considered per split)
+
+\- **max_depth = 5** (Maximum depth of trees to control complexity)
+
+These settings ensure the model remains **robust, generalizable, and interpretable**, making it well-suited for predicting March Madness game outcomes.
+
+Code for grid search implementation:
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+def gen_time_iterator(n_splits=8):
+    tscv = TimeSeriesSplit(n_splits=n_splits)
+    seasons = pd.Series(range(1985, 2025))
+    myTimeiterator = []
+
+    for train_index, test_index in tscv.split(seasons):
+        train_seasons = seasons[train_index]
+        test_seasons = seasons[test_index]
+        
+        train_indices = df[df['Season'].isin(train_seasons)].index
+        test_indices = df[df['Season'].isin(test_seasons)].index
+
+        myTimeiterator.append((train_indices, test_indices))
+    
+    return myTimeiterator
+
+# param_grid = {
+#     'n_estimators': [300, 500, 1000],            # Number of trees
+#     'max_depth': [5, 7, 10, None],                 # Limit tree depth
+#     'min_samples_split': [2, 5, 10, 20],              # Require more samples for splitting
+#     'min_samples_leaf': [2, 4, 10, 15],                # More samples per leaf to generalize
+#     'max_features': ['sqrt', 'log2', 0.3, 0.5, 0.8],  # Reduce correlation among trees
+# }
+
+# grid_search = RandomizedSearchCV(
+#     n_iter=400,
+#     estimator=RandomForestClassifier(random_state=42),
+#     param_distributions=param_grid,
+#     scoring='neg_brier_score',
+#     cv=gen_time_iterator(n_splits=5),
+#     n_jobs=-1,
+#     verbose=3
+# )
+
+# grid_search.fit(X, y)
+
+# # Best parameters after search:
+# print("Best parameters found:", grid_search.best_params_)
+# print("Best cross-validation accuracy:", grid_search.best_score_)
+```
+
+Defining the final model:\
+
+```{python}
+final_model = RandomForestClassifier(
+    random_state=42,
+    n_estimators=1000,
+    min_samples_split=5,
+    min_samples_leaf=15,
+    max_features=0.3,
+    max_depth=5
+)
+final_model.fit(X, y)
+```
+
+Feature importances:
+
+```{python, echo=FALSE, message=FALSE, results='hide', include=FALSE}
+#| code-fold: true
+importances = final_model.feature_importances_
+indices = np.argsort(importances)[::-1]
+
+plt.figure(figsize=(12, 8))
+plt.title("Feature Importances")
+sns.barplot(x=importances[indices], y=[features[i] for i in indices], palette='viridis')
+plt.xlabel('Importance')
+plt.ylabel('Feature')
+plt.show()
+```
+
+Insights:
+
+-   Seed difference turned out to be the most impactful as expected
+
+-   Gender feature didn't turn out to impactfull. This may imply that the target behaviour between men and women is very similar.
+
+-   Coach features didn't turn out to be significantly important. All the coach dependencies could already be implicitly encoded in other features such as Seed Diff, Win Rate diff since the coach can have a impact on those.
+
+## Evaluation
+
+Lets see how our model behaves throughout the years: predicting each year based on all the previous years data.
+
+Implementation:
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+def estimate_year_score(year):
+    train_indices = df[(1985 <= df['Season']) & (df['Season'] <= year-1)].index
+    test_indices = df[df['Season'] == year].index
+
+
+    X_train = X.iloc[train_indices]
+    y_train = y.iloc[train_indices]
+
+    X_test = X.iloc[test_indices]
+    y_test = y.iloc[test_indices]
+
+    final_model = RandomForestClassifier(
+        random_state=42,
+        n_estimators=1000,
+        min_samples_split=5,
+        min_samples_leaf=15,
+        max_features=0.3,
+        max_depth=5
+    )
+    final_model.fit(X_train, y_train)
+    y_pred = final_model.predict_proba(X_test)[:, 1]
+    brier_score = brier_score_loss(y_test, y_pred)
+    accuracy = accuracy_score(y_test, y_pred > 0.5)
+    return float(brier_score), accuracy
+
+years = list(range(1986, 2020)) + list(range(2021, 2025))
+brier_scores = []
+accuracies = []
+
+for year in years:
+    if year == 2020:
+        continue
+    brier_score, accuracy = estimate_year_score(year)
+    brier_scores.append(brier_score)
+    accuracies.append(accuracy)
+```
+
+Plot the accuracy and brier score:
+
+```{python, echo=FALSE, message=FALSE, results='hide'}
+#| code-fold: true
+# Plot Brier scores
+plt.figure(figsize=(12, 6))
+plt.plot(years, brier_scores, marker='o', linestyle='-', color='b', label='Brier Score')
+plt.axhline(y=np.mean(brier_scores), color='r', linestyle='--', label=f'Average Brier Score = {np.mean(brier_scores):.2f}')
+plt.axhline(y=0.1737, color='g', linestyle='--', label='2023 Winning Score = 0.173')
+plt.title('Brier Score by Year')
+plt.xlabel('Year')
+plt.ylabel('Brier Score')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Plot accuracies
+plt.figure(figsize=(12, 6))
+plt.plot(years, accuracies, marker='o', linestyle='-', color='b', label='Accuracy')
+plt.axhline(y=np.mean(accuracies), color='r', linestyle='--', label=f'Average Accuracy = {np.mean(accuracies):.2f}')
+plt.title('Accuracy by Year')
+plt.xlabel('Year')
+plt.ylabel('Accuracy')
+plt.legend()
+plt.grid(True)
+plt.show()
+```
+
+We can see that the target score is very noisy. This can be explained by 2 factors:
+
+-   The dataset for each year consists of \~150 games (march madness games for men and women) which is very small.
+
+-   The nature of the game has a certain degree of randomness which is almost impossible to predict based on the data available (ex. key player got an injury in training which negatively impacted the team performance.\
+
+Still, we achive a performance, comparable to the top kaggle solutions for prevous years.
+
+Predictions for UO:
+
+![](images/pred.png)
+
+We can also look at the predictions for this season's UO Men's.
+
+This graph actually shows that the model doesn't solely base the predictions on the seed difference.
+
+For example such teams as St Mary's CA and BYU which are seeded lower that Oregon still have a higher chance of winning against Oregon :((.
+
+## Conclusion
+
+The research successfully applied data-driven methods to predict March Madness game outcomes, yielding valuable insights and competitive performance.
+
+## **Key Takeaways**
+
+-   **Identified the Most Important Predictive Features**
+    -   The analysis pinpointed key factors influencing game outcomes, helping refine predictive models.
+-   **Achieved Competitive Performance**
+    -   The model’s accuracy was comparable to **top-performing solutions from previous years**, validating its effectiveness.
+-   **Potential Applications**
+    -   The findings have practical implications for **sports analytics**, enabling better data-driven strategies for teams and analysts.
+    -   The model can be leveraged in the **betting industry**, where accurate predictions enhance decision-making for sportsbooks and bettors.
+
+Overall, this report demonstrates the power of **machine learning in sports analytics**, contributing to more precise and insightful March Madness predictions.
